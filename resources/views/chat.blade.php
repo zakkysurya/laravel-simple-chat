@@ -36,6 +36,8 @@
             border-left: 10px solid #0d6efd;
             border-bottom: 10px solid transparent;
         }
+        /* Fix for blue icons on blue background */
+        .message-mine .text-primary { color: white !important; }
 
         /* Other (Left) */
         .message-other { 
@@ -62,6 +64,43 @@
         .message-info { font-size: 0.75rem; color: #6c757d; margin-bottom: 2px; clear: both; }
         .message-info-mine { text-align: right; float: right; width: 100%; }
         .message-info-other { text-align: left; float: left; width: 100%; }
+
+        /* Icon Popup */
+        #icon-popup {
+            position: absolute;
+            bottom: 70px;
+            left: 15px;
+            width: 220px;
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+        .icon-option {
+            font-size: 1.5rem;
+            cursor: pointer;
+            width: 35px;
+            height: 35px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 5px;
+            transition: background 0.2s;
+        }
+        .icon-option:hover { background-color: #f8f9fa; }
+        
+        /* ContentEditable Placeholder */
+        [contenteditable]:empty::before {
+            content: attr(placeholder);
+            color: #6c757d;
+            cursor: text;
+            display: block; /* For Firefox */
+        }
     </style>
 </head>
 <body class="p-4">
@@ -99,11 +138,15 @@
                     @endforeach
                 </div>
 
-                <div class="card-footer">
+                <div class="card-footer position-relative">
+                    <!-- Icon Popup -->
+                    <div id="icon-popup" class="d-none"></div>
+
                     <div id="typing-status" class="typing-indicator"></div>
                     <form id="chat-form">
                         <div class="input-group align-items-end">
-                            <textarea id="message-input" class="form-control" rows="1" placeholder="Tulis pesan..." style="resize:none; max-height:200px; overflow-y:auto;"></textarea>
+                            <button type="button" class="btn btn-light border" id="icon-btn" title="Pilih Icon"><i class="far fa-smile"></i></button>
+                            <div id="message-input" class="form-control" contenteditable="true" placeholder="Tulis pesan..." style="max-height:200px; overflow-y:auto; white-space: pre-wrap;"></div>
                             <button class="btn btn-primary" id="send-btn"><i class="fas fa-paper-plane"></i> Kirim</button>
                         </div>
                     </form>
@@ -213,48 +256,141 @@
     document.getElementById('chat-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const input = document.getElementById('message-input');
-        const msg = input.value.trim();
+        
+        // Parse Content: HTML -> Text with Shortcodes
+        const temp = document.createElement('div');
+        temp.innerHTML = input.innerHTML;
+        
+        // Replace Icon Elements with Codes
+        temp.querySelectorAll('i[data-code]').forEach(el => {
+            el.replaceWith(el.dataset.code);
+        });
+        
+        // Convert br to newline
+        temp.querySelectorAll('br').forEach(el => el.replaceWith('\n'));
+        temp.querySelectorAll('div').forEach(el => el.before('\n')); 
+        
+        const msg = temp.textContent.trim();
         if(!msg) return;
 
-        // Tampilkan pesan sendiri di UI langsung (biar cepat)
+        // Tampilkan pesan sendiri di UI langsung
         appendMessage('Saya', msg, true);
-        input.value = '';
-        input.style.height = 'auto'; // Reset height
+        input.innerHTML = ''; // Clear div
 
         // Kirim ke API
-        await fetch('/send-message', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
-            body: JSON.stringify({ message: msg, receiver_id: activeReceiverId })
-        });
+        try {
+            const res = await fetch('/send-message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
+                body: JSON.stringify({ message: msg, receiver_id: activeReceiverId })
+            });
+            
+            if (!res.ok) {
+                throw new Error('Gagal mengirim');
+            }
+        } catch (err) {
+            console.error(err);
+            alert('Gagal mengirim pesan. Silakan refresh halaman.');
+            // Optional: Remove the appended message or mark as failed
+        }
     });
 
-    // Auto-resize Textarea & Enter to Send
-    const txInput = document.getElementById('message-input');
-    txInput.addEventListener('input', function() {
-        this.style.height = 'auto';
-        this.style.height = (this.scrollHeight) + 'px';
-    });
-    txInput.addEventListener('keydown', function(e) {
+    // Enter to Send
+    const msgInput = document.getElementById('message-input');
+    msgInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             document.getElementById('chat-form').dispatchEvent(new Event('submit'));
         }
     });
 
+    // Handle Paste (Plain Text Only)
+    msgInput.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const text = (e.originalEvent || e).clipboardData.getData('text/plain');
+        document.execCommand('insertText', false, text);
+    });
+
     // Fungsi "Sedang Mengetik..." (Fitur 1)
-    const messageInput = document.getElementById('message-input');
-    messageInput.addEventListener('input', () => {
+    msgInput.addEventListener('input', () => {
         // Kirim Whisper
         if (activeReceiverId) {
-            // Whisper ke channel private orang tersebut (agak tricky di reverb simple)
-            // Untuk simplifikasi demo private typing:
-            // Kita whisper ke public channel tapi bawa data "to_user_id"
-            // Atau untuk paling mudah: Fitur typing HANYA DI PUBLIC dulu untuk tutorial ini.
             window.Echo.join('chat').whisper('typing', { name: '{{ $currentUser->name }}', userId: currentUserId });
         } else {
             window.Echo.join('chat').whisper('typing', { name: '{{ $currentUser->name }}', userId: currentUserId });
         }
+    });
+
+    // --- ICON LOGIC ---
+    const iconMap = {
+        ':smile:': '<i class="fas fa-smile text-warning" data-code=":smile:"></i>',
+        ':laugh:': '<i class="fas fa-laugh-beam text-warning" data-code=":laugh:"></i>',
+        ':sad:': '<i class="fas fa-sad-tear text-warning" data-code=":sad:"></i>',
+        ':angry:': '<i class="fas fa-angry text-danger" data-code=":angry:"></i>',
+        ':love:': '<i class="fas fa-heart text-danger" data-code=":love:"></i>',
+        ':thumbsup:': '<i class="fas fa-thumbs-up text-primary" data-code=":thumbsup:"></i>',
+        ':star:': '<i class="fas fa-star text-warning" data-code=":star:"></i>',
+        ':fire:': '<i class="fas fa-fire text-danger" data-code=":fire:"></i>',
+        ':check:': '<i class="fas fa-check-circle text-success" data-code=":check:"></i>',
+        ':exclaim:': '<i class="fas fa-exclamation-circle text-danger" data-code=":exclaim:"></i>',
+    };
+
+    const iconPopup = document.getElementById('icon-popup');
+    const iconBtn = document.getElementById('icon-btn');
+
+    // Generate Icons
+    Object.entries(iconMap).forEach(([code, html]) => {
+        const div = document.createElement('div');
+        div.className = 'icon-option';
+        div.innerHTML = html;
+        // Use mousedown to prevent focus loss
+        div.onmousedown = (e) => {
+            e.preventDefault();
+            const input = document.getElementById('message-input');
+            input.focus();
+            
+            // Insert Icon using execCommand for better stability
+            const htmlToInsert = html + '&nbsp;';
+            if (!document.execCommand('insertHTML', false, htmlToInsert)) {
+                // Fallback
+                input.innerHTML += htmlToInsert;
+            }
+            
+            iconPopup.classList.add('d-none');
+        };
+        iconPopup.appendChild(div);
+    });
+
+    // Toggle Popup
+    iconBtn.onclick = () => iconPopup.classList.toggle('d-none');
+
+    // Close on click outside
+    document.addEventListener('click', (e) => {
+        if (!iconPopup.contains(e.target) && !iconBtn.contains(e.target)) {
+            iconPopup.classList.add('d-none');
+        }
+    });
+
+    // Message Formatter
+    function formatMessage(text) {
+        // Escape HTML first
+        let safeText = text.replace(/&/g, "&amp;")
+                           .replace(/</g, "&lt;")
+                           .replace(/>/g, "&gt;")
+                           .replace(/"/g, "&quot;")
+                           .replace(/'/g, "&#039;");
+        
+        // Replace Codes
+        for (const [code, html] of Object.entries(iconMap)) {
+            // Use split/join for simple global replacement without regex special char issues
+            safeText = safeText.split(code).join(html);
+        }
+        return safeText;
+    }
+
+    // Hydrate existing messages on load
+    document.querySelectorAll('.message-bubble').forEach(bubble => {
+        bubble.innerHTML = formatMessage(bubble.innerText);
     });
 
     // Helpers UI
@@ -270,7 +406,7 @@
 
         const bubble = document.createElement('div');
         bubble.classList.add('message-bubble', isMine ? 'message-mine' : 'message-other');
-        bubble.innerText = text; // Prevent XSS
+        bubble.innerHTML = formatMessage(text); // Safe HTML with icons
         
         row.appendChild(info);
         row.appendChild(bubble);
