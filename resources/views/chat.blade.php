@@ -5,6 +5,7 @@
     <title>Reverb Super Chat</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     <style>
         .chat-box { height: 400px; overflow-y: auto; background: #f0f2f5; padding: 15px; }
@@ -166,26 +167,50 @@
     // Auto-scroll to bottom on load
     messageContainer.scrollTop = messageContainer.scrollHeight;
     
+    // --- KEEP-ALIVE SYSTEM ---
+    // Ping server every 5 minutes to keep session alive and refresh CSRF
+    setInterval(async () => {
+        try {
+            const res = await fetch('/keep-alive');
+            if (res.ok) {
+                const data = await res.json();
+                document.querySelector('meta[name="csrf-token"]').content = data.csrf_token;
+                console.log('Session refreshed');
+            } else {
+                console.warn('Keep-alive failed');
+            }
+        } catch (e) {
+            console.error('Keep-alive error:', e);
+        }
+    }, 5 * 60 * 1000); // 5 Minutes
+    
     let activeReceiverId = null; // null = Public Chat, angka = Private Chat
     let typingTimer;
+    let onlineUsers = []; // State untuk user online
 
     // --- 1. SETUP REVERB (PRESENCE CHANNEL: 'chat') ---
     
-    const channel = window.Echo.join('chat');
+    const channel = window.Echo.join('chat'); 
 
     channel
         .here((users) => {
-            // Saat pertama connect, load siapa saja yang ada
-            updateUserList(users);
+            // Saat pertama connect, simpan state dan render
+            onlineUsers = users;
+            updateUserList(onlineUsers);
         })
         .joining((user) => {
             console.log(user.name + ' bergabung.');
-            // Refresh list (cara simpel: reload page atau manipulasi array, di sini kita skip manipulasi array kompleks)
-            // Untuk demo, kita abaikan update realtime list user agar kode pendek, 
-            // tapi 'here' di atas sudah menangani load awal.
+            // Tambahkan user jika belum ada
+            if (!onlineUsers.find(u => u.id === user.id)) {
+                onlineUsers.push(user);
+                updateUserList(onlineUsers);
+            }
         })
         .leaving((user) => {
             console.log(user.name + ' keluar.');
+            // Hapus user dari list
+            onlineUsers = onlineUsers.filter(u => u.id !== user.id);
+            updateUserList(onlineUsers);
         })
         .listen('MessageSent', (e) => {
             // Jika kita sedang di Public Chat, tampilkan pesan
@@ -211,9 +236,19 @@
             if (activeReceiverId == e.message.sender_id) {
                 appendMessage(e.message.sender.name, e.message.message, false);
             } else {
-                if (confirm(`Pesan baru dari ${e.message.sender.name}: "${e.message.message}"\nBalas sekarang?`)) {
-                    switchChat(e.message.sender_id, e.message.sender.name);
-                }
+                Swal.fire({
+                    title: `Pesan dari ${e.message.sender.name}`,
+                    text: e.message.message,
+                    icon: 'info',
+                    showCancelButton: true,
+                    confirmButtonText: 'Balas',
+                    cancelButtonText: 'Nanti',
+                    confirmButtonColor: '#0d6efd',
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        switchChat(e.message.sender_id, e.message.sender.name);
+                    }
+                });
             }
         })
         .listenForWhisper('typing', (e) => {
@@ -277,21 +312,43 @@
         appendMessage('Saya', msg, true);
         input.innerHTML = ''; // Clear div
 
-        // Kirim ke API
+        // Kirim ke API menggunakan FormData agar lebih stabil di Firefox
         try {
+            console.log('Sending message to:', activeReceiverId);
+            
+            const formData = new FormData();
+            formData.append('message', msg);
+            if (activeReceiverId) {
+                formData.append('receiver_id', activeReceiverId);
+            }
+            formData.append('_token', document.querySelector('meta[name="csrf-token"]').content);
+
             const res = await fetch('/send-message', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
-                body: JSON.stringify({ message: msg, receiver_id: activeReceiverId })
+                cache: 'no-store',
+                headers: { 
+                    'Accept': 'application/json'
+                    // Jangan set Content-Type, browser akan otomatis set multipart/form-data
+                },
+                body: formData
             });
             
             if (!res.ok) {
-                throw new Error('Gagal mengirim');
+                throw new Error(`Gagal mengirim (Status: ${res.status})`);
             }
         } catch (err) {
             console.error(err);
-            alert('Gagal mengirim pesan. Silakan refresh halaman.');
-            // Optional: Remove the appended message or mark as failed
+            Swal.fire({
+                icon: 'error',
+                title: 'Koneksi Terputus',
+                text: `${err.message}. Silakan muat ulang halaman.`,
+                confirmButtonText: 'Muat Ulang Halaman',
+                confirmButtonColor: '#0d6efd',
+                allowOutsideClick: false,
+                allowEscapeKey: false
+            }).then(() => {
+                window.location.reload();
+            });
         }
     });
 
