@@ -85,12 +85,27 @@ Follow these simple steps to get your chat server running in minutes.
 
 ## 🎮 How to Use
 
-1.  **Open in Browser:** Navigate to `http://localhost:8000/chat/1` to login as **User 1**.
-2.  **Simulate Another User:** Open a **Private/Incognito Window** and go to `http://localhost:8000/chat/2` to login as **User 2**.
-3.  **Chat Away!**
-    *   Type in the main box to chat in the **Global Group**.
-    *   Click on **User 2** in the "Online Users" list to switch to **Private Mode**.
-    *   Watch the magic happen as messages fly instantly between windows! ⚡
+### 1. Run the Application
+Before accessing the chat, ensure all services are running. You can do this with a single command:
+
+```bash
+npm run dev
+```
+
+*This command uses `concurrently` to start:*
+*   `php artisan serve` (Web Server)
+*   `php artisan reverb:start` (WebSocket Server)
+*   `php artisan queue:listen` (Queue Worker)
+*   `npm run dev` (Vite Asset Compilation)
+
+### 2. Access the Chat
+1.  **Open Browser 1:** Navigate to `http://localhost:8000/chat/1` (Auto-login as **User 1**).
+2.  **Open Browser 2 (Incognito):** Navigate to `http://localhost:8000/chat/2` (Auto-login as **User 2**).
+
+### 3. Chat Away!
+*   Type in the main box to chat in the **Global Group**.
+*   Click on **User 2** in the "Online Users" list to switch to **Private Mode**.
+*   Watch the magic happen as messages fly instantly between windows! ⚡
 
 ---
 
